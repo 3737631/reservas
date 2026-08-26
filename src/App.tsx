@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase, type Slot } from "./supabase";
 
-const TIMES = [
-  { group: "Comida", slots: ["13:00", "13:30", "14:00", "14:30", "15:00", "15:30"] },
-  { group: "Cena", slots: ["20:00", "20:30", "21:00", "21:30", "22:00"] },
-];
+function getTimesForDate(d: string) {
+  if (!d) return [];
+  const day = new Date(d + "T12:00:00").getDay();
+  if (day === 0) return [{ group: "Mediodía", slots: ["13:00", "13:30", "14:00", "14:30", "15:00", "15:30"] }];
+  if (day >= 2 && day <= 6) return [{ group: "Noche", slots: ["20:00", "20:30", "21:00", "21:30", "22:00"] }];
+  return [];
+}
 
 function formatDateLabel(d: string) {
   const date = new Date(d + "T12:00:00");
@@ -101,7 +104,7 @@ function Panel() {
 
       <div className="slots">
         {loading && <p style={{textAlign:"center", color:"var(--muted)", fontSize:"0.85rem", fontFamily:"Roboto Condensed"}}>Cargando…</p>}
-        {TIMES.map(g => (
+        {(() => { const timesForDate = getTimesForDate(date); if (timesForDate.length === 0 && !loading) return <p style={{textAlign:"center", color:"var(--muted)", padding:"2rem 1rem", fontFamily:"Roboto Condensed"}}>Cerrado — No hay servicio este día</p>; return timesForDate.map(g => (
           <div key={g.group}>
             <p style={{fontSize:"0.68rem", letterSpacing:"0.14em", textTransform:"uppercase", color:"var(--muted)", margin:"10px 2px 6px", fontFamily:"Roboto Condensed"}}>{g.group}</p>
             {g.slots.map(t => {
@@ -136,7 +139,7 @@ function Panel() {
               );
             })}
           </div>
-        ))}
+        ))})()}
         <p style={{textAlign:"center", fontSize:"0.7rem", color:"var(--muted)", marginTop:10, fontFamily:"Roboto Condensed"}}>Toca una hora disponible para crear. Toca una reserva para editar/cancelar.</p>
       </div>
 
@@ -284,7 +287,7 @@ function EditSheet({ slot, onClose, onCancelRequest, onSaved, allSlots }: { slot
           <div className="row2">
             <input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)} required />
             <select className="input" value={time} onChange={e=>setTime(e.target.value)} required>
-              {["13:00","13:30","14:00","14:30","15:00","15:30","20:00","20:30","21:00","21:30","22:00"].map(t=>{
+              {getTimesForDate(date).flatMap(g=>g.slots).map(t=>{
                 const taken = timesForDate.includes(t);
                 return <option key={t} value={t} disabled={taken}>{t}{taken?" - ocupado":""}</option>;
               })}
