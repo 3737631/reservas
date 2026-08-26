@@ -15,55 +15,10 @@ function formatDateLabel(d: string) {
 }
 
 export default function App() {
-  const [session, setSession] = useState<any>(null);
-  const [checkingAuth, setCheckingAuth] = useState(true);
-
-  // auth
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setCheckingAuth(false);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => sub.subscription.unsubscribe();
-  }, []);
-
-  if (checkingAuth) return <div className="login-wrap"><p style={{color:"var(--muted)"}}>Cargando…</p></div>;
-  if (!session) return <Login />;
-
-  return <Panel session={session} />;
+  return <Panel />;
 }
 
-function Login() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(false);
-  async function onLogin(e: React.FormEvent) {
-    e.preventDefault();
-    setErr(""); setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-    if (error) setErr(error.message);
-    setLoading(false);
-  }
-  return (
-    <div className="login-wrap">
-      <form onSubmit={onLogin} className="login-card">
-        <div className="login-logo">Dichoso</div>
-        <p style={{fontFamily:"Roboto Condensed, sans-serif", fontSize:"0.62rem", letterSpacing:"0.18em", textTransform:"uppercase", color:"var(--muted)", marginBottom:14}}>Reservas — Acceso privado</p>
-        <div style={{display:"grid", gap:10, textAlign:"left"}}>
-          <input className="input" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="username" inputMode="email" required />
-          <input className="input" type="password" placeholder="Contraseña" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" required />
-          {err && <p style={{fontSize:"0.82rem", color:"#c0392b", textAlign:"center"}}>{err}</p>}
-          <button className="btn-primary" disabled={loading}>{loading?"Entrando…":"Entrar"}</button>
-          <p style={{fontSize:"0.7rem", color:"var(--muted)", textAlign:"center", fontFamily:"Roboto Condensed"}}>Usa el usuario creado en Supabase Auth</p>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-function Panel({ session }: { session: any }) {
+function Panel() {
   const todayStr = useMemo(() => new Date().toLocaleDateString("en-CA"), []);
   const [date, setDate] = useState(todayStr);
   const [slots, setSlots] = useState<Slot[]>([]);
@@ -141,9 +96,6 @@ function Panel({ session }: { session: any }) {
             onChange={e=>e.target.value && setDate(e.target.value)}
             aria-label="Calendario"
           />
-        </div>
-        <div style={{display:"flex", justifyContent:"center", marginTop:8}}>
-          <button onClick={()=>supabase.auth.signOut()} style={{fontSize:"0.7rem", color:"var(--muted)", background:"none", border:"none", textDecoration:"underline", cursor:"pointer", fontFamily:"Roboto Condensed"}}>Salir · {session.user.email}</button>
         </div>
       </header>
 
