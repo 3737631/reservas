@@ -130,18 +130,20 @@ function Panel() {
                   }}
                 >
                   <div className="slot-left">
-                    <div className="slot-time">{t}</div>
+                    <div className="slot-time">
+                      {t} <span style={{ fontSize: "0.78rem", fontWeight: 400, color: reserved ? "#c0392b" : "var(--muted)", marginLeft: 8, verticalAlign: "middle" }}>{list.length}/3</span>
+                    </div>
                     {s ? (
                       <div className="slot-detail">
-                        {list.length}/3 · {s.persons} personas · {s.name} · {s.phone}{s.note ? ` · ${s.note}`: ""}{list.length > 1 ? ` +${list.length - 1} más` : ""}
+                        {s.persons} personas · {s.name} · {s.phone}{s.note ? ` · ${s.note}` : ""}{list.length > 1 ? ` +${list.length - 1} más` : ""}
                       </div>
                     ) : (
-                      <div className="slot-detail" style={{color: past ? "var(--muted)" : "#27ae60"}}>{past ? "Pasada" : "Disponible"}</div>
+                      <div className="slot-detail" style={{ color: past ? "var(--muted)" : "#27ae60" }}>{past ? "Pasada" : "Disponible"}</div>
                     )}
                   </div>
                   <div className="slot-right">
                     <span className="badge">
-                      {reserved ? "🔴 Reservado" : past ? "⚪ Pasada" : list.length > 0 ? `🟢 ${list.length}/3` : "🟢 Disponible"}
+                      {reserved ? "🔴 Reservado" : past ? "⚪ Pasada" : "🟢 Disponible"}
                     </span>
                   </div>
                 </div>
