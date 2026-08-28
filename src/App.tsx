@@ -11,7 +11,8 @@ function getTimesForDate(d: string) {
 
 function formatDateLabel(d: string) {
   const date = new Date(d + "T12:00:00");
-  const isToday = d === new Date().toLocaleDateString("en-CA");
+  const todayLocal = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const isToday = d === todayLocal;
   const label = date.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
   const cap = label.charAt(0).toUpperCase() + label.slice(1);
   return `${isToday ? "Hoy · " : ""}${cap}`;
@@ -22,7 +23,7 @@ export default function App() {
 }
 
 function Panel() {
-  const todayStr = useMemo(() => new Date().toLocaleDateString("en-CA"), []);
+  const todayStr = useMemo(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10), []);
   const [date, setDate] = useState(todayStr);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [loading, setLoading] = useState(false);
@@ -31,8 +32,12 @@ function Panel() {
   const [showConfirmCancel, setShowConfirmCancel] = useState<Slot | null>(null);
 
   const byTime = useMemo(() => {
-    const m = new Map<string, Slot>();
-    slots.forEach(s => m.set(s.time, s));
+    const m = new Map<string, Slot[]>();
+    slots.forEach(s => {
+      const arr = m.get(s.time) ?? [];
+      arr.push(s);
+      m.set(s.time, arr);
+    });
     return m;
   }, [slots]);
 
@@ -108,9 +113,10 @@ function Panel() {
           <div key={g.group}>
             <p style={{fontSize:"0.68rem", letterSpacing:"0.14em", textTransform:"uppercase", color:"var(--muted)", margin:"10px 2px 6px", fontFamily:"Roboto Condensed"}}>{g.group}</p>
             {g.slots.map(t => {
-              const s = byTime.get(t);
+              const list = byTime.get(t) ?? [];
               const past = isPast(t);
-              const reserved = !!s;
+              const reserved = list.length >= 3;
+              const s = list[0];
               return (
                 <div
                   key={t}
@@ -118,6 +124,7 @@ function Panel() {
                   style={{ opacity: past ? 0.45 : 1 }}
                   onClick={() => {
                     if (past) return;
+                    if (reserved) return;
                     if (s) setEditing(s);
                     else setSelectedTime(t);
                   }}
@@ -125,14 +132,16 @@ function Panel() {
                   <div className="slot-left">
                     <div className="slot-time">{t}</div>
                     {s ? (
-                      <div className="slot-detail">{s.persons} personas · {s.name} · {s.phone}{s.note ? ` · ${s.note}`: ""}</div>
+                      <div className="slot-detail">
+                        {list.length}/3 · {s.persons} personas · {s.name} · {s.phone}{s.note ? ` · ${s.note}`: ""}{list.length > 1 ? ` +${list.length - 1} más` : ""}
+                      </div>
                     ) : (
                       <div className="slot-detail" style={{color: past ? "var(--muted)" : "#27ae60"}}>{past ? "Pasada" : "Disponible"}</div>
                     )}
                   </div>
                   <div className="slot-right">
                     <span className="badge">
-                      {reserved ? "🔴 Reservado" : past ? "⚪ Pasada" : "🟢 Disponible"}
+                      {reserved ? "🔴 Reservado" : past ? "⚪ Pasada" : list.length > 0 ? `🟢 ${list.length}/3` : "🟢 Disponible"}
                     </span>
                   </div>
                 </div>
@@ -185,10 +194,9 @@ function CreateSheet({ date, time, onClose, onCreated }: { date: string; time: s
     setErr("");
     if (!name.trim() || !phone.trim() || !persons) { setErr("Rellena nombre, teléfono y personas"); return; }
     setSaving(true);
-    // Comprobación en BD antes de insertar (evita duplicados si otro ya reservó)
-    const { data: existing } = await supabase.from("slots").select("id").eq("date", date).eq("time", time).limit(1);
-    if (existing && existing.length > 0) {
-      setErr("Esa hora ya está reservada. Elige otra.");
+    const { data: existing } = await supabase.from("slots").select("id").eq("date", date).eq("time", time);
+    if (existing && existing.length >= 3) {
+      setErr("Esa hora ya está completa (3/3). Elige otra.");
       setSaving(false);
       return;
     }
@@ -249,9 +257,9 @@ function EditSheet({ slot, onClose, onCancelRequest, onSaved, allSlots }: { slot
     setSaving(true);
 
     if (!isSameSlot) {
-      const { data: clash } = await supabase.from("slots").select("id").eq("date", date).eq("time", time).limit(1);
-      if (clash && clash.length > 0) {
-        setErr("La nueva hora ya está reservada.");
+      const { data: clash } = await supabase.from("slots").select("id").eq("date", date).eq("time", time);
+      if (clash && clash.length >= 3) {
+        setErr("La nueva hora ya está completa (3/3).");
         setSaving(false);
         return;
       }
