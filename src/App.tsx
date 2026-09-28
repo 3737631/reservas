@@ -4,6 +4,7 @@ import { supabase, type Slot } from "./supabase";
 function getTimesForDate(d: string) {
   if (!d) return [];
   const day = new Date(d + "T12:00:00").getDay();
+  if (day === 2) return [];
   if (day === 0) return [{ group: "Mediodía", slots: ["13:00", "13:30", "14:00", "14:30", "15:00", "15:30"] }];
   if (day >= 3 && day <= 6)
     return [
