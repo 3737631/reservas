@@ -5,8 +5,16 @@ function getTimesForDate(d: string) {
   if (!d) return [];
   const day = new Date(d + "T12:00:00").getDay();
   if (day === 0) return [{ group: "Mediodía", slots: ["13:00", "13:30", "14:00", "14:30", "15:00", "15:30"] }];
-  if (day >= 2 && day <= 6) return [{ group: "Noche", slots: ["20:00", "20:30", "21:00", "21:30", "22:00"] }];
+  if (day >= 3 && day <= 6)
+    return [
+      { group: "Mañana", slots: ["12:00", "12:30", "13:00", "13:30", "14:00"] },
+      { group: "Noche", slots: ["20:00", "20:30", "21:00", "21:30", "22:00"] },
+    ];
   return [];
+}
+
+function dayName(d: string) {
+  return ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"][new Date(d + "T12:00:00").getDay()];
 }
 
 function formatDateLabel(d: string) {
@@ -28,6 +36,7 @@ function Panel() {
   const [slots, setSlots] = useState<Slot[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
+  const [managing, setManaging] = useState<string | null>(null);
   const [editing, setEditing] = useState<Slot | null>(null);
   const [showConfirmCancel, setShowConfirmCancel] = useState<Slot | null>(null);
 
@@ -109,7 +118,7 @@ function Panel() {
 
       <div className="slots">
         {loading && <p style={{textAlign:"center", color:"var(--muted)", fontSize:"0.85rem", fontFamily:"Roboto Condensed"}}>Cargando…</p>}
-        {(() => { const timesForDate = getTimesForDate(date); if (timesForDate.length === 0 && !loading) return <p style={{textAlign:"center", color:"var(--muted)", padding:"2rem 1rem", fontFamily:"Roboto Condensed"}}>Cerrado — No hay servicio este día</p>; return timesForDate.map(g => (
+        {(() => { const timesForDate = getTimesForDate(date); if (timesForDate.length === 0 && !loading) return <p style={{textAlign:"center", color:"var(--muted)", padding:"2rem 1rem", fontFamily:"Roboto Condensed"}}>{dayName(date) === "Martes" ? "Martes cerrado" : "Cerrado — No hay servicio este día"}</p>; return timesForDate.map(g => (
           <div key={g.group}>
             <p style={{fontSize:"0.68rem", letterSpacing:"0.14em", textTransform:"uppercase", color:"var(--muted)", margin:"10px 2px 6px", fontFamily:"Roboto Condensed"}}>{g.group}</p>
             {g.slots.map(t => {
@@ -124,9 +133,7 @@ function Panel() {
                   style={{ opacity: past ? 0.45 : 1 }}
                   onClick={() => {
                     if (past) return;
-                    if (reserved) return;
-                    if (s) setEditing(s);
-                    else setSelectedTime(t);
+                    setManaging(t);
                   }}
                 >
                   <div className="slot-left">
@@ -135,7 +142,13 @@ function Panel() {
                     </div>
                     {s ? (
                       <div className="slot-detail">
-                        {s.persons} personas · {s.name} · {s.phone}{s.note ? ` · ${s.note}` : ""}{list.length > 1 ? ` +${list.length - 1} más` : ""}
+                        {list.slice(0, 2).map((x, idx) => (
+                          <span key={x.id}>
+                            {idx > 0 && " · "}
+                            {x.name === "__BLOQUEO__" ? "🔒 Cerrado (reservas por teléfono)" : `${x.persons} pers. · ${x.name} · ${x.phone}`}
+                          </span>
+                        ))}
+                        {list.length > 2 ? ` +${list.length - 2} más` : ""}
                       </div>
                     ) : (
                       <div className="slot-detail" style={{ color: past ? "var(--muted)" : "#27ae60" }}>{past ? "Pasada" : "Disponible"}</div>
@@ -151,8 +164,20 @@ function Panel() {
             })}
           </div>
         ))})()}
-        <p style={{textAlign:"center", fontSize:"0.7rem", color:"var(--muted)", marginTop:10, fontFamily:"Roboto Condensed"}}>Toca una hora disponible para crear. Toca una reserva para editar/cancelar.</p>
+        <p style={{textAlign:"center", fontSize:"0.7rem", color:"var(--muted)", marginTop:10, fontFamily:"Roboto Condensed"}}>Toca una hora para gestionarla: añadir reservas, editar, cancelar o cerrar la hora.</p>
       </div>
+
+      {managing && (
+        <ManageSheet
+          date={date}
+          time={managing}
+          list={byTime.get(managing) ?? []}
+          onClose={()=>setManaging(null)}
+          onAdd={()=>{ setManaging(null); setSelectedTime(managing); }}
+          onEdit={s=>{ setManaging(null); setEditing(s); }}
+          onChanged={()=>load(date)}
+        />
+      )}
 
       {selectedTime && (
         <CreateSheet date={date} time={selectedTime} onClose={()=>setSelectedTime(null)} onCreated={()=>{ setSelectedTime(null); load(date); }} />
@@ -179,6 +204,84 @@ function Panel() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ManageSheet({ date, time, list, onClose, onAdd, onEdit, onChanged }: { date: string; time: string; list: Slot[]; onClose: ()=>void; onAdd: ()=>void; onEdit: (s: Slot)=>void; onChanged: ()=>void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const real = list.filter(s => s.name !== "__BLOQUEO__");
+  const blocks = list.filter(s => s.name === "__BLOQUEO__").length;
+  const free = 3 - list.length;
+
+  async function blockHour() {
+    setErr("");
+    setBusy(true);
+    const need = 3 - (real.length + blocks);
+    if (need <= 0) { setBusy(false); return; }
+    const rows = Array.from({ length: need }, () => ({ date, time, name: "__BLOQUEO__", phone: "-", persons: "0", note: "hora cerrada" }));
+    const { error } = await supabase.from("slots").insert(rows);
+    if (error) setErr(error.message);
+    setBusy(false);
+    onChanged();
+  }
+
+  async function unblockHour() {
+    setErr("");
+    setBusy(true);
+    const { error } = await supabase.from("slots").delete().eq("date", date).eq("time", time).eq("name", "__BLOQUEO__");
+    if (error) setErr(error.message);
+    setBusy(false);
+    onChanged();
+  }
+
+  return (
+    <div className="sheet" onClick={onClose}>
+      <div className="sheet-card" onClick={e=>e.stopPropagation()}>
+        <div className="sheet-title">{time} · {date.split("-").reverse().join("/")}</div>
+        <div className="sheet-sub">{list.length}/3 ocupadas · {free > 0 ? `${free} libres` : "Completa"}</div>
+
+        <div style={{display:"grid", gap:8, marginTop:14, textAlign:"left"}}>
+          {list.length === 0 && <p style={{fontSize:"0.8rem", color:"var(--muted)", fontFamily:"Roboto Condensed"}}>Sin reservas en esta hora.</p>}
+          {list.map(s => (
+            <div key={s.id} style={{display:"flex", alignItems:"center", gap:8, padding:"8px 10px", border:"1px solid rgba(0,0,0,.12)", borderRadius:8}}>
+              <div style={{flex:1, minWidth:0}}>
+                <div style={{fontSize:"0.92rem", fontWeight:600, fontFamily:"Roboto Condensed"}}>
+                  {s.name === "__BLOQUEO__" ? "🔒 Hora cerrada" : `${s.name} · ${s.persons} pers.`}
+                </div>
+                {s.name !== "__BLOQUEO__" && (
+                  <div style={{fontSize:"0.72rem", color:"var(--muted)", fontFamily:"Roboto Condensed"}}>
+                    {s.phone}{s.note ? ` · ${s.note}` : ""}
+                  </div>
+                )}
+              </div>
+              {s.name !== "__BLOQUEO__" && (
+                <button className="btn-ghost" style={{padding:"6px 10px", fontSize:"0.72rem"}} onClick={()=>onEdit(s)}>Editar</button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {err && <p style={{color:"#c0392b", fontSize:"0.85rem", textAlign:"center", marginTop:10}}>{err}</p>}
+
+        <div style={{display:"grid", gap:8, marginTop:14}}>
+          {free > 0 ? (
+            <button className="btn-primary" onClick={onAdd}>+ Añadir otra reserva ({free} {free === 1 ? "hueco" : "huecos"})</button>
+          ) : (
+            <p style={{fontSize:"0.78rem", color:"#c0392b", textAlign:"center", fontFamily:"Roboto Condensed"}}>Hora completa (3/3)</p>
+          )}
+          {blocks > 0 ? (
+            <button className="btn-ghost" disabled={busy} onClick={unblockHour}>Reabrir hora (quitar {blocks} {blocks === 1 ? "cierre" : "cierres"})</button>
+          ) : (
+            <button className="btn-ghost" disabled={busy} onClick={blockHour}>🔒 Cerrar hora (reservas por teléfono)</button>
+          )}
+          <button className="btn-ghost" onClick={onClose}>Volver</button>
+        </div>
+        <p style={{fontSize:"0.68rem", color:"var(--muted)", textAlign:"center", marginTop:10, fontFamily:"Roboto Condensed"}}>
+          Al cerrar la hora se ocupa con reservas internas: en la web aparecerá como "reservado".
+        </p>
+      </div>
     </div>
   );
 }
@@ -278,8 +381,12 @@ function EditSheet({ slot, onClose, onCancelRequest, onSaved, allSlots }: { slot
     onSaved();
   }
 
-  // horas para el selector según fecha elegida (si cambia de fecha, filtra ocupadas de esa fecha)
-  const timesForDate = allSlots.filter(s => s.date === date && s.id !== slot.id).map(s=>s.time);
+  // horas para el selector según fecha elegida (deshabilita solo si esa fecha/hora ya está 3/3)
+  const countsForDate = useMemo(() => {
+    const m = new Map<string, number>();
+    allSlots.filter(s => s.date === date && s.id !== slot.id).forEach(s => m.set(s.time, (m.get(s.time) ?? 0) + 1));
+    return m;
+  }, [allSlots, date, slot.id]);
 
   return (
     <div className="sheet" onClick={onClose}>
@@ -298,8 +405,9 @@ function EditSheet({ slot, onClose, onCancelRequest, onSaved, allSlots }: { slot
             <input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)} required />
             <select className="input" value={time} onChange={e=>setTime(e.target.value)} required>
               {getTimesForDate(date).flatMap(g=>g.slots).map(t=>{
-                const taken = timesForDate.includes(t);
-                return <option key={t} value={t} disabled={taken}>{t}{taken?" - ocupado":""}</option>;
+                const n = countsForDate.get(t) ?? 0;
+                const full = n >= 3;
+                return <option key={t} value={t} disabled={full}>{t}{full?" - completa":n>0?` - ${n}/3`:""}</option>;
               })}
             </select>
           </div>
