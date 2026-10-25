@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { supabase, type Slot } from "./supabase";
+import {
+  supabase,
+  type Slot,
+  type Zone,
+  BLOQUEO,
+  SALON_CERRADO,
+  SALON_POR_SERVICIO,
+  TERRAZA_POR_HORA,
+  mensajeError,
+  salonEnServicio,
+} from "./supabase";
 
 function getTimesForDate(d: string) {
   if (!d) return [];
@@ -41,15 +51,38 @@ function Panel() {
   const [editing, setEditing] = useState<Slot | null>(null);
   const [showConfirmCancel, setShowConfirmCancel] = useState<Slot | null>(null);
 
+  const [busySalon, setBusySalon] = useState(false);
+  const [salonErr, setSalonErr] = useState("");
+
   const byTime = useMemo(() => {
     const m = new Map<string, Slot[]>();
-    slots.forEach(s => {
+    slots.filter(s => s.name !== SALON_CERRADO).forEach(s => {
       const arr = m.get(s.time) ?? [];
       arr.push(s);
       m.set(s.time, arr);
     });
     return m;
   }, [slots]);
+
+  const salonCerrado = slots.some(s => s.name === SALON_CERRADO);
+
+  async function cerrarSalon() {
+    setSalonErr("");
+    setBusySalon(true);
+    const { error } = await supabase.from("slots").insert({ date, time: "00:00", name: SALON_CERRADO, phone: "-", persons: "0", note: "salón cerrado", zone: "salon" });
+    if (error) setSalonErr(mensajeError(error.message));
+    setBusySalon(false);
+    load(date);
+  }
+
+  async function abrirSalon() {
+    setSalonErr("");
+    setBusySalon(true);
+    const { error } = await supabase.from("slots").delete().eq("date", date).eq("name", SALON_CERRADO);
+    if (error) setSalonErr(mensajeError(error.message));
+    setBusySalon(false);
+    load(date);
+  }
 
   async function load(d: string) {
     setLoading(true);
@@ -118,14 +151,41 @@ function Panel() {
       </header>
 
       <div className="slots">
-        {loading && <p style={{textAlign:"center", color:"var(--muted)", fontSize:"0.85rem", fontFamily:"Roboto Condensed"}}>Cargando…</p>}
+        {getTimesForDate(date).length > 0 && (
+          <div style={{ border: "1px solid rgba(0,0,0,.12)", borderRadius: 10, padding: "10px 12px", marginBottom: 8, background: salonCerrado ? "#FFF5F5" : "transparent" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 160, fontFamily: "Roboto Condensed", fontSize: "0.9rem" }}>
+                <strong>Salón</strong>{" "}
+                {salonCerrado ? (
+                  <span style={{ color: "#c0392b" }}>🔒 cerrado hoy: en la web solo se puede reservar terraza</span>
+                ) : (
+                  <span style={{ color: "var(--muted)" }}>
+                    {getTimesForDate(date).map(g => {
+                      const t0 = g.slots[0];
+                      return `${g.group === "Noche" ? "cena" : "comida"} ${salonEnServicio(slots, t0)}/${SALON_POR_SERVICIO}`;
+                    }).join(" · ")}
+                  </span>
+                )}
+              </div>
+              {salonCerrado ? (
+                <button className="btn-ghost" disabled={busySalon} onClick={abrirSalon}>Reabrir salón</button>
+              ) : (
+                <button className="btn-ghost" disabled={busySalon} onClick={cerrarSalon}>🔒 Cerrar salón este día</button>
+              )}
+            </div>
+            {salonErr && <p style={{ color: "#c0392b", fontSize: "0.8rem", marginTop: 6 }}>{salonErr}</p>}
+          </div>
+        )}
+        {loading &&<p style={{textAlign:"center", color:"var(--muted)", fontSize:"0.85rem", fontFamily:"Roboto Condensed"}}>Cargando…</p>}
         {(() => { const timesForDate = getTimesForDate(date); if (timesForDate.length === 0 && !loading) return <p style={{textAlign:"center", color:"var(--muted)", padding:"2rem 1rem", fontFamily:"Roboto Condensed"}}>{dayName(date) === "Martes" ? "Martes cerrado" : "Cerrado — No hay servicio este día"}</p>; return timesForDate.map(g => (
           <div key={g.group}>
             <p style={{fontSize:"0.68rem", letterSpacing:"0.14em", textTransform:"uppercase", color:"var(--muted)", margin:"10px 2px 6px", fontFamily:"Roboto Condensed"}}>{g.group}</p>
             {g.slots.map(t => {
               const list = byTime.get(t) ?? [];
               const past = isPast(t);
-              const reserved = list.length >= 3;
+              const terrazaCount = list.filter(x => x.zone !== "salon").length;
+              const salonCount = list.length - terrazaCount;
+              const reserved = terrazaCount >= TERRAZA_POR_HORA;
               const s = list[0];
               return (
                 <div
@@ -139,14 +199,14 @@ function Panel() {
                 >
                   <div className="slot-left">
                     <div className="slot-time">
-                      {t} <span style={{ fontSize: "0.78rem", fontWeight: 400, color: reserved ? "#c0392b" : "var(--muted)", marginLeft: 8, verticalAlign: "middle" }}>{list.length}/3</span>
+                      {t} <span style={{ fontSize: "0.78rem", fontWeight: 400, color: reserved ? "#c0392b" : "var(--muted)", marginLeft: 8, verticalAlign: "middle" }}>{terrazaCount}/{TERRAZA_POR_HORA}{salonCount > 0 ? ` · salón ${salonCount}` : ""}</span>
                     </div>
                     {s ? (
                       <div className="slot-detail">
                         {list.slice(0, 2).map((x, idx) => (
                           <span key={x.id}>
                             {idx > 0 && " · "}
-                            {x.name === "__BLOQUEO__" ? "🔒 Cerrado (reservas por teléfono)" : `${x.persons} pers. · ${x.name} · ${x.phone}`}
+                            {x.name === BLOQUEO ? "🔒 Cerrado (reservas por teléfono)" : `${x.zone === "salon" ? "Salón" : "Terraza"} · ${x.persons} pers. · ${x.name} · ${x.phone}`}
                           </span>
                         ))}
                         {list.length > 2 ? ` +${list.length - 2} más` : ""}
@@ -173,6 +233,7 @@ function Panel() {
           date={date}
           time={managing}
           list={byTime.get(managing) ?? []}
+          allSlots={slots}
           onClose={()=>setManaging(null)}
           onAdd={()=>{ setManaging(null); setSelectedTime(managing); }}
           onEdit={s=>{ setManaging(null); setEditing(s); }}
@@ -181,7 +242,7 @@ function Panel() {
       )}
 
       {selectedTime && (
-        <CreateSheet date={date} time={selectedTime} onClose={()=>setSelectedTime(null)} onCreated={()=>{ setSelectedTime(null); load(date); }} />
+        <CreateSheet date={date} time={selectedTime} allSlots={slots} onClose={()=>setSelectedTime(null)} onCreated={()=>{ setSelectedTime(null); load(date); }} />
       )}
       {editing && !showConfirmCancel && (
         <EditSheet slot={editing} onClose={()=>setEditing(null)} onCancelRequest={()=>setShowConfirmCancel(editing)} onSaved={()=>{ setEditing(null); load(date); }} allSlots={slots} />
@@ -209,21 +270,24 @@ function Panel() {
   );
 }
 
-function ManageSheet({ date, time, list, onClose, onAdd, onEdit, onChanged }: { date: string; time: string; list: Slot[]; onClose: ()=>void; onAdd: ()=>void; onEdit: (s: Slot)=>void; onChanged: ()=>void }) {
+function ManageSheet({ date, time, list, allSlots, onClose, onAdd, onEdit, onChanged }: { date: string; time: string; list: Slot[]; allSlots: Slot[]; onClose: ()=>void; onAdd: ()=>void; onEdit: (s: Slot)=>void; onChanged: ()=>void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const real = list.filter(s => s.name !== "__BLOQUEO__");
-  const blocks = list.filter(s => s.name === "__BLOQUEO__").length;
-  const free = 3 - list.length;
+  const terraza = list.filter(s => s.zone !== "salon");
+  const blocks = list.filter(s => s.name === BLOQUEO).length;
+  const free = TERRAZA_POR_HORA - terraza.length;
+  const salonCerrado = allSlots.some(s => s.name === SALON_CERRADO);
+  const salonCount = salonEnServicio(allSlots, time);
+  const salonFree = !salonCerrado && salonCount < SALON_POR_SERVICIO;
 
   async function blockHour() {
     setErr("");
     setBusy(true);
-    const need = 3 - (real.length + blocks);
+    const need = TERRAZA_POR_HORA - terraza.length;
     if (need <= 0) { setBusy(false); return; }
-    const rows = Array.from({ length: need }, () => ({ date, time, name: "__BLOQUEO__", phone: "-", persons: "0", note: "hora cerrada" }));
+    const rows = Array.from({ length: need }, () => ({ date, time, name: BLOQUEO, phone: "-", persons: "0", note: "hora cerrada" }));
     const { error } = await supabase.from("slots").insert(rows);
-    if (error) setErr(error.message);
+    if (error) setErr(mensajeError(error.message));
     setBusy(false);
     onChanged();
   }
@@ -231,8 +295,8 @@ function ManageSheet({ date, time, list, onClose, onAdd, onEdit, onChanged }: { 
   async function unblockHour() {
     setErr("");
     setBusy(true);
-    const { error } = await supabase.from("slots").delete().eq("date", date).eq("time", time).eq("name", "__BLOQUEO__");
-    if (error) setErr(error.message);
+    const { error } = await supabase.from("slots").delete().eq("date", date).eq("time", time).eq("name", BLOQUEO);
+    if (error) setErr(mensajeError(error.message));
     setBusy(false);
     onChanged();
   }
@@ -241,7 +305,11 @@ function ManageSheet({ date, time, list, onClose, onAdd, onEdit, onChanged }: { 
     <div className="sheet" onClick={onClose}>
       <div className="sheet-card" onClick={e=>e.stopPropagation()}>
         <div className="sheet-title">{time} · {date.split("-").reverse().join("/")}</div>
-        <div className="sheet-sub">{list.length}/3 ocupadas · {free > 0 ? `${free} libres` : "Completa"}</div>
+        <div className="sheet-sub">
+          Terraza {terraza.length}/{TERRAZA_POR_HORA} · {free > 0 ? `${free} libres` : "completa"}
+          {" · "}
+          Salón {salonCerrado ? "cerrado" : `${salonCount}/${SALON_POR_SERVICIO} en ${time < "17:00" ? "comida" : "cena"}`}
+        </div>
 
         <div style={{display:"grid", gap:8, marginTop:14, textAlign:"left"}}>
           {list.length === 0 && <p style={{fontSize:"0.8rem", color:"var(--muted)", fontFamily:"Roboto Condensed"}}>Sin reservas en esta hora.</p>}
@@ -249,15 +317,15 @@ function ManageSheet({ date, time, list, onClose, onAdd, onEdit, onChanged }: { 
             <div key={s.id} style={{display:"flex", alignItems:"center", gap:8, padding:"8px 10px", border:"1px solid rgba(0,0,0,.12)", borderRadius:8}}>
               <div style={{flex:1, minWidth:0}}>
                 <div style={{fontSize:"0.92rem", fontWeight:600, fontFamily:"Roboto Condensed"}}>
-                  {s.name === "__BLOQUEO__" ? "🔒 Hora cerrada" : `${s.name} · ${s.persons} pers.`}
+                  {s.name === BLOQUEO ? "🔒 Hora cerrada" : `${s.zone === "salon" ? "Salón" : "Terraza"} · ${s.name} · ${s.persons} pers.`}
                 </div>
-                {s.name !== "__BLOQUEO__" && (
+                {s.name !== BLOQUEO && (
                   <div style={{fontSize:"0.72rem", color:"var(--muted)", fontFamily:"Roboto Condensed"}}>
                     {s.phone}{s.note ? ` · ${s.note}` : ""}
                   </div>
                 )}
               </div>
-              {s.name !== "__BLOQUEO__" && (
+              {s.name !== BLOQUEO && (
                 <button className="btn-ghost" style={{padding:"6px 10px", fontSize:"0.72rem"}} onClick={()=>onEdit(s)}>Editar</button>
               )}
             </div>
@@ -267,10 +335,12 @@ function ManageSheet({ date, time, list, onClose, onAdd, onEdit, onChanged }: { 
         {err && <p style={{color:"#c0392b", fontSize:"0.85rem", textAlign:"center", marginTop:10}}>{err}</p>}
 
         <div style={{display:"grid", gap:8, marginTop:14}}>
-          {free > 0 ? (
-            <button className="btn-primary" onClick={onAdd}>+ Añadir otra reserva ({free} {free === 1 ? "hueco" : "huecos"})</button>
+          {free > 0 || salonFree ? (
+            <button className="btn-primary" onClick={onAdd}>
+              + Añadir reserva ({[free > 0 ? `${free} en terraza` : "", salonFree ? "salón" : ""].filter(Boolean).join(" · ")})
+            </button>
           ) : (
-            <p style={{fontSize:"0.78rem", color:"#c0392b", textAlign:"center", fontFamily:"Roboto Condensed"}}>Hora completa (3/3)</p>
+            <p style={{fontSize:"0.78rem", color:"#c0392b", textAlign:"center", fontFamily:"Roboto Condensed"}}>Terraza completa (3/3) y salón {salonCerrado ? "cerrado" : "completo"}</p>
           )}
           {blocks > 0 ? (
             <button className="btn-ghost" disabled={busy} onClick={unblockHour}>Reabrir hora (quitar {blocks} {blocks === 1 ? "cierre" : "cierres"})</button>
@@ -287,7 +357,12 @@ function ManageSheet({ date, time, list, onClose, onAdd, onEdit, onChanged }: { 
   );
 }
 
-function CreateSheet({ date, time, onClose, onCreated }: { date: string; time: string; onClose: ()=>void; onCreated: ()=>void; }) {
+function CreateSheet({ date, time, allSlots, onClose, onCreated }: { date: string; time: string; allSlots: Slot[]; onClose: ()=>void; onCreated: ()=>void; }) {
+  const terrazaCount = allSlots.filter(s => s.date === date && s.time === time && s.zone !== "salon").length;
+  const salonCerrado = allSlots.some(s => s.name === SALON_CERRADO);
+  const terrazaFree = terrazaCount < TERRAZA_POR_HORA;
+  const salonFree = !salonCerrado && salonEnServicio(allSlots, time) < SALON_POR_SERVICIO;
+  const [zone, setZone] = useState<Zone>(terrazaFree ? "terraza" : "salon");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [persons, setPersons] = useState("2");
@@ -300,16 +375,20 @@ function CreateSheet({ date, time, onClose, onCreated }: { date: string; time: s
     setErr("");
     if (!name.trim() || !phone.trim() || !persons) { setErr("Rellena nombre, teléfono y personas"); return; }
     setSaving(true);
-    const { data: existing } = await supabase.from("slots").select("id").eq("date", date).eq("time", time);
-    if (existing && existing.length >= 3) {
-      setErr("Esa hora ya está completa (3/3). Elige otra.");
-      setSaving(false);
-      return;
+    if (zone === "terraza") {
+      // Solo cuenta terraza (y reservas antiguas sin zona); el salon tiene su propio limite.
+      const { data: existing } = await supabase.from("slots").select("id,zone").eq("date", date).eq("time", time);
+      const ocupadas = (existing ?? []).filter((r: { zone: string | null }) => r.zone !== "salon").length;
+      if (ocupadas >= TERRAZA_POR_HORA) {
+        setErr("La terraza ya está completa a esa hora (3/3). Elige salón u otra hora.");
+        setSaving(false);
+        return;
+      }
     }
-    const { error } = await supabase.from("slots").insert({ date, time, name: name.trim(), phone: phone.trim(), persons, note: note.trim() || null });
+    const { error } = await supabase.from("slots").insert({ date, time, name: name.trim(), phone: phone.trim(), persons, note: note.trim() || null, zone });
     if (error) {
       if ((error as any).code === "23505") setErr("Esa hora ya está reservada.");
-      else setErr(error.message);
+      else setErr(mensajeError(error.message));
       setSaving(false);
       return;
     }
@@ -323,6 +402,10 @@ function CreateSheet({ date, time, onClose, onCreated }: { date: string; time: s
         <div className="sheet-title">Nueva reserva</div>
         <div className="sheet-sub">{date.split("-").reverse().join("/")} · {time}</div>
         <form onSubmit={onSubmit} className="form-grid">
+          <select className="input" value={zone} onChange={e=>setZone(e.target.value as Zone)} required>
+            <option value="terraza" disabled={!terrazaFree}>Terraza{terrazaFree ? "" : " - completa"}</option>
+            <option value="salon" disabled={!salonFree}>Salón{salonFree ? "" : salonCerrado ? " - cerrado" : " - completo"}</option>
+          </select>
           <input className="input" placeholder="Nombre" value={name} onChange={e=>setName(e.target.value)} required autoFocus />
           <div className="row2">
             <input className="input" placeholder="Teléfono" value={phone} onChange={e=>setPhone(e.target.value.replace(/[^0-9]/g,"").slice(0,15))} inputMode="numeric" required />
@@ -351,10 +434,11 @@ function EditSheet({ slot, onClose, onCancelRequest, onSaved, allSlots }: { slot
   const [date, setDate] = useState(slot.date);
   const [time, setTime] = useState(slot.time);
   const [note, setNote] = useState(slot.note ?? "");
+  const [zone, setZone] = useState<Zone>(slot.zone === "salon" ? "salon" : "terraza");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
-  const isSameSlot = date === slot.date && time === slot.time;
+  const isSameSlot = date === slot.date && time === slot.time && zone === (slot.zone === "salon" ? "salon" : "terraza");
 
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
@@ -362,19 +446,21 @@ function EditSheet({ slot, onClose, onCancelRequest, onSaved, allSlots }: { slot
     if (!name.trim() || !phone.trim()) { setErr("Faltan datos"); return; }
     setSaving(true);
 
-    if (!isSameSlot) {
-      const { data: clash } = await supabase.from("slots").select("id").eq("date", date).eq("time", time);
-      if (clash && clash.length >= 3) {
-        setErr("La nueva hora ya está completa (3/3).");
+    if (!isSameSlot && zone === "terraza") {
+      const { data: clash } = await supabase.from("slots").select("id,zone").eq("date", date).eq("time", time).neq("id", slot.id);
+      const ocupadas = (clash ?? []).filter((r: { zone: string | null }) => r.zone !== "salon").length;
+      if (ocupadas >= TERRAZA_POR_HORA) {
+        setErr("La terraza ya está completa a esa hora (3/3).");
         setSaving(false);
         return;
       }
     }
 
-    const { error } = await supabase.from("slots").update({ date, time, name: name.trim(), phone: phone.trim(), persons, note: note.trim() || null }).eq("id", slot.id);
+    // El limite del salon (2 por servicio) y el cierre del dia los comprueba la base de datos.
+    const { error } = await supabase.from("slots").update({ date, time, name: name.trim(), phone: phone.trim(), persons, note: note.trim() || null, zone }).eq("id", slot.id);
     if (error) {
       if ((error as any).code === "23505") setErr("Esa hora ya está ocupada.");
-      else setErr(error.message);
+      else setErr(mensajeError(error.message));
       setSaving(false);
       return;
     }
@@ -385,7 +471,7 @@ function EditSheet({ slot, onClose, onCancelRequest, onSaved, allSlots }: { slot
   // horas para el selector según fecha elegida (deshabilita solo si esa fecha/hora ya está 3/3)
   const countsForDate = useMemo(() => {
     const m = new Map<string, number>();
-    allSlots.filter(s => s.date === date && s.id !== slot.id).forEach(s => m.set(s.time, (m.get(s.time) ?? 0) + 1));
+    allSlots.filter(s => s.date === date && s.id !== slot.id && s.zone !== "salon" && s.name !== SALON_CERRADO).forEach(s => m.set(s.time, (m.get(s.time) ?? 0) + 1));
     return m;
   }, [allSlots, date, slot.id]);
 
@@ -395,6 +481,10 @@ function EditSheet({ slot, onClose, onCancelRequest, onSaved, allSlots }: { slot
         <div className="sheet-title">Editar reserva</div>
         <div className="sheet-sub">{slot.date.split("-").reverse().join("/")} · {slot.time} · {slot.persons} pers. · {slot.name}</div>
         <form onSubmit={onSave} className="form-grid">
+          <select className="input" value={zone} onChange={e=>setZone(e.target.value as Zone)}>
+            <option value="terraza">Terraza</option>
+            <option value="salon">Salón</option>
+          </select>
           <input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="Nombre" required />
           <div className="row2">
             <input className="input" value={phone} onChange={e=>setPhone(e.target.value.replace(/[^0-9]/g,"").slice(0,15))} inputMode="numeric" required />
