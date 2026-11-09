@@ -5,6 +5,11 @@ import {
   type Zone,
   BLOQUEO,
   SALON_CERRADO,
+  CIERRE_DIA,
+  cierreDe,
+  salonCerradoEn,
+  servicioDe,
+  type Servicio,
   SALON_POR_SERVICIO,
   TERRAZA_POR_HORA,
   mensajeError,
@@ -64,22 +69,35 @@ function Panel() {
     return m;
   }, [slots]);
 
-  const salonCerrado = slots.some(s => s.name === SALON_CERRADO);
+  // Cierre antiguo de "dia completo" (hora 00:00): cierra comida y cena a la vez.
+  const cierreDiaCompleto = slots.some(s => s.name === SALON_CERRADO && s.time === CIERRE_DIA);
 
-  async function cerrarSalon() {
+  async function cerrarServicio(servicio: Servicio) {
     setSalonErr("");
     setBusySalon(true);
-    const { error } = await supabase.from("slots").insert({ date, time: "00:00", name: SALON_CERRADO, phone: "-", persons: "0", note: "salón cerrado", zone: "salon" });
+    const { error } = await supabase.from("slots").insert({ date, time: cierreDe(servicio), name: SALON_CERRADO, phone: "-", persons: "0", note: `salón cerrado (${servicio})`, zone: "salon" });
     if (error) setSalonErr(mensajeError(error.message));
     setBusySalon(false);
     load(date);
   }
 
-  async function abrirSalon() {
+  async function abrirServicio(servicio: Servicio) {
     setSalonErr("");
     setBusySalon(true);
-    const { error } = await supabase.from("slots").delete().eq("date", date).eq("name", SALON_CERRADO);
-    if (error) setSalonErr(mensajeError(error.message));
+    if (cierreDiaCompleto) {
+      // Se sustituye el cierre de dia completo por el del otro servicio, que se queda cerrado.
+      const otro: Servicio = servicio === "comida" ? "cena" : "comida";
+      const yaCerradoOtro = slots.some(s => s.name === SALON_CERRADO && s.time === cierreDe(otro));
+      if (!yaCerradoOtro) {
+        const { error: e1 } = await supabase.from("slots").insert({ date, time: cierreDe(otro), name: SALON_CERRADO, phone: "-", persons: "0", note: `salón cerrado (${otro})`, zone: "salon" });
+        if (e1) { setSalonErr(mensajeError(e1.message)); setBusySalon(false); load(date); return; }
+      }
+      const { error: e2 } = await supabase.from("slots").delete().eq("date", date).eq("name", SALON_CERRADO).eq("time", CIERRE_DIA);
+      if (e2) setSalonErr(mensajeError(e2.message));
+    } else {
+      const { error } = await supabase.from("slots").delete().eq("date", date).eq("name", SALON_CERRADO).eq("time", cierreDe(servicio));
+      if (error) setSalonErr(mensajeError(error.message));
+    }
     setBusySalon(false);
     load(date);
   }
@@ -152,27 +170,34 @@ function Panel() {
 
       <div className="slots">
         {getTimesForDate(date).length > 0 && (
-          <div style={{ border: "1px solid rgba(0,0,0,.12)", borderRadius: 10, padding: "10px 12px", marginBottom: 8, background: salonCerrado ? "#FFF5F5" : "transparent" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <div style={{ flex: 1, minWidth: 160, fontFamily: "Roboto Condensed", fontSize: "0.9rem" }}>
-                <strong>Salón</strong>{" "}
-                {salonCerrado ? (
-                  <span style={{ color: "#c0392b" }}>🔒 cerrado hoy: en la web solo se puede reservar terraza</span>
-                ) : (
-                  <span style={{ color: "var(--muted)" }}>
-                    {getTimesForDate(date).map(g => {
-                      const t0 = g.slots[0];
-                      return `${g.group === "Noche" ? "cena" : "comida"} ${salonEnServicio(slots, t0)}/${SALON_POR_SERVICIO}`;
-                    }).join(" · ")}
-                  </span>
-                )}
-              </div>
-              {salonCerrado ? (
-                <button className="btn-ghost" disabled={busySalon} onClick={abrirSalon}>Reabrir salón</button>
-              ) : (
-                <button className="btn-ghost" disabled={busySalon} onClick={cerrarSalon}>🔒 Cerrar salón este día</button>
-              )}
-            </div>
+          <div style={{ border: "1px solid rgba(0,0,0,.12)", borderRadius: 10, padding: "10px 12px", marginBottom: 8 }}>
+            <div style={{ fontFamily: "Roboto Condensed", fontSize: "0.9rem", marginBottom: 6 }}><strong>Salón</strong></div>
+            {getTimesForDate(date).map(g => {
+              const servicio = servicioDe(g.slots[0]);
+              const cerrado = salonCerradoEn(slots, servicio);
+              return (
+                <div key={g.group} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "6px 8px", borderRadius: 8, marginBottom: 4, background: cerrado ? "#FFF5F5" : "transparent" }}>
+                  <div style={{ flex: 1, minWidth: 150, fontFamily: "Roboto Condensed", fontSize: "0.88rem" }}>
+                    <span style={{ textTransform: "capitalize" }}>{servicio}</span>{" "}
+                    {cerrado ? (
+                      <span style={{ color: "#c0392b" }}>🔒 cerrado: en la web solo terraza</span>
+                    ) : (
+                      <span style={{ color: "var(--muted)" }}>{salonEnServicio(slots, g.slots[0])}/{SALON_POR_SERVICIO} reservas</span>
+                    )}
+                  </div>
+                  {cerrado ? (
+                    <button className="btn-ghost" disabled={busySalon} onClick={() => abrirServicio(servicio)}>Reabrir {servicio}</button>
+                  ) : (
+                    <button className="btn-ghost" disabled={busySalon} onClick={() => cerrarServicio(servicio)}>🔒 Cerrar salón en {servicio}</button>
+                  )}
+                </div>
+              );
+            })}
+            {cierreDiaCompleto && (
+              <p style={{ fontSize: "0.72rem", color: "var(--muted)", marginTop: 4, fontFamily: "Roboto Condensed" }}>
+                Este día estaba cerrado entero. Reabre solo la comida o solo la cena y el otro servicio se queda cerrado.
+              </p>
+            )}
             {salonErr && <p style={{ color: "#c0392b", fontSize: "0.8rem", marginTop: 6 }}>{salonErr}</p>}
           </div>
         )}
@@ -276,7 +301,7 @@ function ManageSheet({ date, time, list, allSlots, onClose, onAdd, onEdit, onCha
   const terraza = list.filter(s => s.zone !== "salon");
   const blocks = list.filter(s => s.name === BLOQUEO).length;
   const free = TERRAZA_POR_HORA - terraza.length;
-  const salonCerrado = allSlots.some(s => s.name === SALON_CERRADO);
+  const salonCerrado = salonCerradoEn(allSlots, servicioDe(time));
   const salonCount = salonEnServicio(allSlots, time);
   const salonFree = !salonCerrado && salonCount < SALON_POR_SERVICIO;
 
@@ -359,7 +384,7 @@ function ManageSheet({ date, time, list, allSlots, onClose, onAdd, onEdit, onCha
 
 function CreateSheet({ date, time, allSlots, onClose, onCreated }: { date: string; time: string; allSlots: Slot[]; onClose: ()=>void; onCreated: ()=>void; }) {
   const terrazaCount = allSlots.filter(s => s.date === date && s.time === time && s.zone !== "salon").length;
-  const salonCerrado = allSlots.some(s => s.name === SALON_CERRADO);
+  const salonCerrado = salonCerradoEn(allSlots, servicioDe(time));
   const terrazaFree = terrazaCount < TERRAZA_POR_HORA;
   const salonFree = !salonCerrado && salonEnServicio(allSlots, time) < SALON_POR_SERVICIO;
   const [zone, setZone] = useState<Zone>(terrazaFree ? "terraza" : "salon");

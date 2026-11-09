@@ -26,8 +26,24 @@ export const TERRAZA_POR_HORA = 3;
 /** Reservas de salon por servicio (comida/cena) y dia. */
 export const SALON_POR_SERVICIO = 2;
 
+export type Servicio = "comida" | "cena";
+
 /** Comida hasta las 16:59, cena desde las 17:00. */
-export const servicioDe = (time: string) => (time < "17:00" ? "comida" : "cena");
+export const servicioDe = (time: string): Servicio => (time < "17:00" ? "comida" : "cena");
+
+/**
+ * Hora con la que se guarda el cierre del salon (fila con name = SALON_CERRADO):
+ *  "00:00" = dia completo (cierres antiguos), "00:01" = solo comida, "23:59" = solo cena.
+ */
+export const CIERRE_DIA = "00:00";
+export const CIERRE_COMIDA = "00:01";
+export const CIERRE_CENA = "23:59";
+export const cierreDe = (s: Servicio) => (s === "comida" ? CIERRE_COMIDA : CIERRE_CENA);
+
+/** True si el salon esta cerrado en ese servicio (o el dia completo). */
+export function salonCerradoEn(slots: Slot[], servicio: Servicio) {
+  return slots.some((s) => s.name === SALON_CERRADO && (s.time === CIERRE_DIA || servicioDe(s.time) === servicio));
+}
 
 /** Reservas reales de salon de un servicio (no cuenta la fila de "salon cerrado"). */
 export function salonEnServicio(slots: Slot[], time: string, exceptId?: string) {
@@ -39,7 +55,7 @@ export function salonEnServicio(slots: Slot[], time: string, exceptId?: string) 
 /** Traduce los errores de la base de datos a un mensaje claro. */
 export function mensajeError(msg: string) {
   if (msg.includes("SALON_COMPLETO")) return "El salón ya tiene 2 reservas en este servicio (comida o cena).";
-  if (msg.includes("SALON_CERRADO")) return "El salón está cerrado este día. Reábrelo para añadir reservas de salón.";
+  if (msg.includes("SALON_CERRADO")) return "El salón está cerrado en este servicio. Reábrelo para añadir reservas de salón.";
   return msg;
 }
 
