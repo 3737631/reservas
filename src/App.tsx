@@ -410,7 +410,11 @@ function CreateSheet({ date, time, allSlots, onClose, onCreated }: { date: strin
         return;
       }
     }
-    const { error } = await supabase.from("slots").insert({ date, time, name: name.trim(), phone: phone.trim(), persons, note: note.trim() || null, zone });
+    const fila = { date, time, name: name.trim(), phone: phone.trim(), persons, note: note.trim() || null, zone };
+    // origen "panel": la reserva la apunta el propio restaurante, asi que no genera aviso de Telegram.
+    let { error } = await supabase.from("slots").insert({ ...fila, origen: "panel" });
+    // Si la columna "origen" aun no existe en la base de datos, se guarda igual (sin marcar origen).
+    if (error && /origen/i.test(error.message)) ({ error } = await supabase.from("slots").insert(fila));
     if (error) {
       if ((error as any).code === "23505") setErr("Esa hora ya está reservada.");
       else setErr(mensajeError(error.message));
